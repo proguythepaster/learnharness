@@ -1,12 +1,16 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 /** Native SDK IDs stay distinct from the app's persisted connection routes. */
-export type NativeSubscriptionProviderId = "github-copilot" | "xai";
-export type NativeSubscriptionLogicalId = "github-copilot-subscription" | "xai-subscription";
+export type NativeSubscriptionProviderId = "github-copilot" | "xai" | "anthropic";
+export type NativeSubscriptionLogicalId = "github-copilot-subscription" | "xai-subscription" | "anthropic-subscription";
 
 export const NATIVE_SUBSCRIPTIONS = [
 	{ providerId: "github-copilot", logicalId: "github-copilot-subscription", label: "GitHub Copilot" },
 	{ providerId: "xai", logicalId: "xai-subscription", label: "Grok" },
+	// Claude Pro/Max OAuth: the same subscription Claude Code signs into, used
+	// natively (no `claude` CLI binary) via pi-ai's anthropic OAuth provider.
+	// Distinct from the CLI-shelling "claude-code" provider (constants.ts).
+	{ providerId: "anthropic", logicalId: "anthropic-subscription", label: "Claude Pro/Max" },
 ] as const;
 
 export interface SubscriptionPrompt {

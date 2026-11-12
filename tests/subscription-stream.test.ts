@@ -22,13 +22,20 @@ function snapshot(background = true): NativeSubscriptionSnapshot {
 		models: Object.fromEntries(NATIVE_SUBSCRIPTIONS.map((p) => [p.providerId, piModels().getModels(p.providerId)])),
 	};
 }
+// Anthropic's transport only takes the OAuth Bearer + Claude Code identity path
+// when the token carries the "sk-ant-oat" shape (pi-ai isOAuthToken); every token
+// still contains "fixture-oauth-only" so the no-leak assertions catch all of them.
+function leaseToken(providerId: string): string { return providerId === "anthropic" ? "sk-ant-oat01-fixture-oauth-only" : "fixture-oauth-only"; }
+function leaseAuth(providerId: string): { apiKey: string; baseUrl?: string; headers?: Record<string, string> } {
+	return { apiKey: leaseToken(providerId), ...(providerId === "github-copilot" ? { baseUrl: "https://api.business.githubcopilot.com", headers: { "x-fixture-auth": "native-retained" } } : {}) };
+}
 const emit = (value: unknown) => (process.emit as (event: string, value: unknown) => boolean)("message", value);
 before(async () => {
 	process.env.LH_DESKTOP_SERVER = "1"; process.env.LH_DESKTOP_API_SECRET = "d".repeat(64);
 	process.env.XAI_API_KEY = "fixture-must-never-be-used"; process.env.COPILOT_GITHUB_TOKEN = "fixture-api-route-only";
 	Object.defineProperty(process, "connected", { configurable: true, value: true });
 	Object.defineProperty(process, "send", { configurable: true, value: (message: any, callback?: () => void) => {
-		sends++; queueMicrotask(() => emit({ channel: "lh:subscriptions", id: message.id, op: message.op, ...(denied && message.op === "lease" ? { ok: false, error: "fixture expired refresh" } : { ok: true, value: message.op === "snapshot" ? snapshot() : { scope: message.scope, auth: { apiKey: "fixture-oauth-only", ...(message.scope.providerId === "github-copilot" ? { baseUrl: "https://api.business.githubcopilot.com", headers: { "x-fixture-auth": "native-retained" } } : {}) } } }) }));
+		sends++; queueMicrotask(() => emit({ channel: "lh:subscriptions", id: message.id, op: message.op, ...(denied && message.op === "lease" ? { ok: false, error: "fixture expired refresh" } : { ok: true, value: message.op === "snapshot" ? snapshot() : { scope: message.scope, auth: leaseAuth(message.scope.providerId) } }) }));
 		callback?.(); return true;
 	} });
 	await refreshSubscriptionModels();
@@ -65,10 +72,12 @@ for (const p of NATIVE_SUBSCRIPTIONS) test(`${p.providerId}: every SDK transport
 			onPayload: (raw, selected) => { payloadObserved = true; assert.equal(selected.provider, p.providerId); return { ...raw as object, model: "caller-cannot-replace-selected" }; },
 			fetch: async (input, init) => {
 				requests++; const request = new Request(input, init), body = await request.json(); actualBody = body;
-				assert.equal(request.headers.get("authorization"), "Bearer fixture-oauth-only");
+				assert.equal(request.headers.get("authorization"), `Bearer ${leaseToken(p.providerId)}`);
 				assert.equal(body.model, native.id);
-				if (p.providerId === "github-copilot") { assert.equal(new URL(request.url).origin, "https://api.business.githubcopilot.com"); assert.equal(request.headers.get("x-fixture-auth"), "native-retained"); }
-				else assert.equal(new URL(request.url).origin, "https://api.x.ai");
+				const origin = new URL(request.url).origin;
+				if (p.providerId === "github-copilot") { assert.equal(origin, "https://api.business.githubcopilot.com"); assert.equal(request.headers.get("x-fixture-auth"), "native-retained"); }
+				else if (p.providerId === "anthropic") assert.equal(origin, "https://api.anthropic.com");
+				else assert.equal(origin, "https://api.x.ai");
 				return new Response('{"error":{"message":"private-fixture-provider-detail"}}', { status: 401, headers: { "content-type": "application/json" } });
 			},
 		}).result();
@@ -76,7 +85,15 @@ for (const p of NATIVE_SUBSCRIPTIONS) test(`${p.providerId}: every SDK transport
 		assert(!result.errorMessage?.includes("private-fixture-provider-detail")); assert(result.errorMessage?.includes("No API-key fallback"));
 		capture.reply(result); capture.finish();
 		const record = JSON.parse(fs.readFileSync(path.join(dir, `researcher-${runId}.json`), "utf8"));
-		assert.deepEqual(record.request.payload, actualBody, "Observe after the selected model is enforced, not the caller replacement");
+		// The anthropic-messages transport owns the `anthropic-beta` list and injects
+		// it around the capture hook, so the debug capture and the wire body can differ
+		// by that transport-managed field alone. It is not caller-controlled; normalize
+		// it out of both sides and keep the strict match on everything that matters —
+		// crucially the enforced model, never the caller's "caller-cannot-replace-selected".
+		const observed = { ...(actualBody as Record<string, unknown>) };
+		const captured = { ...(record.request.payload as Record<string, unknown>) };
+		if (native.api === "anthropic-messages") { delete observed.betas; delete captured.betas; }
+		assert.deepEqual(captured, observed, "Observe after the selected model is enforced, not the caller replacement");
 		assert.equal(record.request.model.provider, p.logicalId);
 		assert(!JSON.stringify(record).includes("fixture-oauth-only"));
 		assert(!JSON.stringify(record).includes("native-retained"));
