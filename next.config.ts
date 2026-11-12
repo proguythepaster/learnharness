@@ -98,8 +98,11 @@ const nextConfig: NextConfig = {
 			// Public native OAuth factories load these flows through variable imports.
 			// Electron main uses the same standalone SDK; the offline runtime gate
 			// evaluates their real toAuth paths without login or provider requests.
-			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/{load,github-copilot,xai,device-code}.js",
-			"node_modules/@earendil-works/pi-ai/dist/utils/sleep.js",
+			// Anthropic (Claude Pro/Max) uses the loopback-callback flow, so its full
+			// static closure — the flow plus callback-server/pkce/oauth-page — must be
+			// force-included too (the variable import hides it from the tracer).
+			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/{load,github-copilot,xai,device-code,anthropic,callback-server,pkce}.js",
+			"node_modules/@earendil-works/pi-ai/dist/utils/{sleep,oauth-page}.js",
 			"node_modules/@earendil-works/pi-agent-core/dist/**/*.json",
 			// Next 16.3.2 native Turbopack applies unanchored excludes while
 			// traversing modules; **/data/**/* still prunes gcp-metadata and
